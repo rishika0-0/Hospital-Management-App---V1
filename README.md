@@ -5,6 +5,7 @@ This system streamlines hospital operations by managing patients, doctors, appoi
 
 Key Features:
 👨‍💼 Admin Panel: Manage doctors, patients, and appointments.
+
 🩺 Doctor Dashboard: View assigned patients, update diagnosis and treatment details.
 🧑‍🤝‍🧑 Patient Portal: Book appointments, view prescriptions, and track medical history.
 📅 Smart Scheduling: Avoid appointment conflicts and maintain accurate records.
