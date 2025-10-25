@@ -1,6 +1,6 @@
 # Hospital-Management-App---V1
 
-A web-based Hospital Management System built using Flask, Jinja2, HTML, CSS, and Bootstrap, with SQLite as the database.
+A web-based Hospital Management System built using Flask, Jinja2, HTML, CSS and Bootstrap with SQLite as the database.
 
 This system streamlines hospital operations by managing patients, doctors, appointments, and treatment records efficiently.
 
