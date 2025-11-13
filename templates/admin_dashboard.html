@@ -1,3 +1,158 @@
-<h2>Welcome, {{ user }} (Admin)</h2>
-<a href="{{ url_for('add_doctor') }}">Add Doctor</a> |
-<a href="{{ url_for('logout') }}">Logout</a>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Dashboard - Hospital Management</title>
+  <style>
+    /* --------- Global Styles --------- */
+    body {
+      font-family: "Poppins", sans-serif;
+      background-color: #f9fafb;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+
+    h2, h3 {
+      text-align: center;
+      color: #34495e;
+    }
+
+    a {
+      color: #4a90e2;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* --------- Dashboard Summary --------- */
+    div {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      background-color: #fff;
+      border-radius: 12px;
+      margin: 20px auto;
+      padding: 15px 30px;
+      width: 80%;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    div p {
+      background-color: #e8f6ef;
+      border-left: 4px solid #7ed6df;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    /* --------- Table Styles --------- */
+    table {
+      border-collapse: collapse;
+      width: 90%;
+      margin: 25px auto;
+      background-color: #ffffff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 16px;
+    }
+
+    th {
+      background-color: #b8e1ff;
+      color: #2c3e50;
+      font-weight: 600;
+    }
+
+    tr:nth-child(even) {
+      background-color: #f6fbff;
+    }
+
+    tr:hover {
+      background-color: #e8f0fe;
+      transition: 0.3s;
+    }
+
+    /* --------- Links Section --------- */
+    .nav-links {
+      text-align: center;
+      margin: 30px 0;
+    }
+
+    .nav-links a {
+      background-color: #b8e1ff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      margin: 0 8px;
+      display: inline-block;
+      transition: background-color 0.3s, transform 0.2s;
+    }
+
+    .nav-links a:hover {
+      background-color: #a1d3f7;
+      transform: translateY(-2px);
+    }
+
+    /* --------- Responsive --------- */
+    @media (max-width: 768px) {
+      div {
+        flex-direction: column;
+        align-items: center;
+        width: 90%;
+      }
+      table, th, td {
+        font-size: 14px;
+      }
+      .nav-links a {
+        display: block;
+        margin: 10px auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>Admin Dashboard</h2>
+  <div>
+    <p>Total Doctors: {{ total_doctors }}</p>
+    <p>Total Patients: {{ total_patients }}</p>
+    <p>Total Appointments: {{ total_appointments }}</p>
+  </div>
+
+  <h3>Upcoming Appointments</h3>
+  <table>
+    <tr>
+      <th>ID</th>
+      <th>Doctor</th>
+      <th>Patient</th>
+      <th>Date</th>
+      <th>Time</th>
+      <th>Status</th>
+    </tr>
+    {% for a in upcoming %}
+    <tr>
+      <td>{{ a.id }}</td>
+      <td>{{ a.doctor.name }}</td>
+      <td>{{ a.patient.name }}</td>
+      <td>{{ a.date }}</td>
+      <td>{{ a.time }}</td>
+      <td>{{ a.status }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="nav-links">
+    <a href="{{ url_for('admin_doctors') }}">Manage Doctors</a>
+    <a href="{{ url_for('admin_patients') }}">Manage Patients</a>
+    <a href="{{ url_for('admin_appointments') }}">All Appointments</a>
+    <a href="{{ url_for('logout') }}">Logout</a>
+  </div>
+</body>
+</html>

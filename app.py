@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-from models import db, Admin, Doctor, Patient, Department
+from models import db, Admin, Doctor, Patient, Department, Appointment
 from config import Config
 from flask_bcrypt import Bcrypt
+from datetime import date
+
 
 bcrypt = Bcrypt()
 
@@ -91,11 +93,44 @@ def register():
 
     return render_template('register.html')
 
-@app.route('/admin')
+# Utility: ensures admin-only access
+def admin_required(func):
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if session.get('role') != 'admin':
+            flash("Admin login required", "warning")
+            return redirect(url_for('login'))
+        return func(*args, **kwargs)
+    return wrapper
+
+@app.route('/admin/dashboard')
+@admin_required
 def admin_dashboard():
-    if session.get('role') != 'admin':
-        return redirect(url_for('login'))
-    return render_template('admin_dashboard.html', user=session['user'])
+    # totals
+    total_doctors = Doctor.query.filter_by(is_active=True).count()
+    total_patients = Patient.query.filter_by(is_active=True).count()
+    total_appointments = Appointment.query.count()
+
+    # upcoming appointments next 7 days for quick view
+    today = date.today()
+    upcoming = Appointment.query.filter(Appointment.date >= today).order_by(Appointment.date).limit(10).all()
+
+    return render_template('admin_dashboard.html',
+                           total_doctors=total_doctors,
+                           total_patients=total_patients,
+                           total_appointments=total_appointments,
+                           upcoming=upcoming)
+
+def doctor_required(func):
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if session.get('role') != 'doctor':
+            flash("Doctor login required", "warning")
+            return redirect(url_for('login'))
+        return func(*args, **kwargs)
+    return wrapper
 
 @app.route('/doctor')
 def doctor_dashboard():
@@ -103,35 +138,171 @@ def doctor_dashboard():
         return redirect(url_for('login'))
     return render_template('doctor_dashboard.html', user=session['user'])
 
+def patient_required(func):
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if session.get('role') != 'patient':
+            flash("Patient login required", "warning")
+            return redirect(url_for('login'))
+        return func(*args, **kwargs)
+    return wrapper
+
 @app.route('/patient')
 def patient_dashboard():
     if session.get('role') != 'patient':
         return redirect(url_for('login'))
     return render_template('patient_dashboard.html', user=session['user'])
 
-@app.route('/add_doctor', methods=['GET', 'POST'])
-def add_doctor():
-    if session.get('role') != 'admin':
-        return redirect(url_for('login'))
+@app.route('/admin/doctors')
+@admin_required
+def admin_doctors():
+    q = request.args.get('q')
+    # allow search by name or specialization
+    if q:
+        doctors = Doctor.query.join(Department).filter(
+            db.or_(Doctor.name.ilike(f'%{q}%'),
+                   Department.name.ilike(f'%{q}%'))
+        ).all()
+    else:
+        doctors = Doctor.query.all()
+    return render_template('admin_doctors.html', doctors=doctors)
 
+#Admin adds, Edits, Blacklists, removes Doctors
+@app.route('/admin/doctors/add', methods=['GET', 'POST'])
+@admin_required
+def admin_add_doctor():
+    departments = Department.query.all()
     if request.method == 'POST':
         name = request.form['name']
         email = request.form['email']
         dept_id = request.form['department']
         password = bcrypt.generate_password_hash(request.form['password']).decode('utf-8')
+        availability = request.form.get('availability')  # text field, free format or JSON-string
 
         if Doctor.query.filter_by(email=email).first():
-            flash("⚠️ Doctor with this email already exists.", "warning")
-            return redirect(url_for('add_doctor'))
+            flash("Doctor email already exists", "warning")
+            return redirect(url_for('admin_add_doctor'))
 
-        doctor = Doctor(name=name, email=email, password=password, specialization_id=dept_id)
-        db.session.add(doctor)
+        doc = Doctor(name=name, email=email, password=password, specialization_id=dept_id, availability=availability)
+        db.session.add(doc)
         db.session.commit()
-        flash("✅ Doctor added successfully!", "success")
-        return redirect(url_for('admin_dashboard'))
+        flash("Doctor added successfully", "success")
+        return redirect(url_for('admin_doctors'))
 
+    return render_template('admin_add_doctor.html', departments=departments)
+
+
+@app.route('/admin/doctors/<int:doctor_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def admin_edit_doctor(doctor_id):
+    doctor = Doctor.query.get_or_404(doctor_id)
     departments = Department.query.all()
-    return render_template('add_doctor.html', departments=departments)
+    if request.method == 'POST':
+        doctor.name = request.form['name']
+        doctor.email = request.form['email']
+        doctor.specialization_id = request.form['department']
+        doctor.availability = request.form.get('availability')
+        pw = request.form.get('password')
+        if pw:
+            doctor.password = bcrypt.generate_password_hash(pw).decode('utf-8')
+        db.session.commit()
+        flash("Doctor updated", "success")
+        return redirect(url_for('admin_doctors'))
+    return render_template('admin_edit_doctor.html', doctor=doctor, departments=departments)
+
+
+@app.route('/admin/doctors/<int:doctor_id>/toggle_active')
+@admin_required
+def admin_toggle_doctor(doctor_id):
+    doctor = Doctor.query.get_or_404(doctor_id)
+    doctor.is_active = not doctor.is_active
+    db.session.commit()
+    msg = "activated" if doctor.is_active else "blacklisted"
+    flash(f"Doctor {msg}.", "info")
+    return redirect(url_for('admin_doctors'))
+
+@app.route('/admin/doctors/<int:doctor_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_doctor(doctor_id):
+    doctor = Doctor.query.get_or_404(doctor_id)
+
+    has_appointments = Appointment.query.filter_by(doctor_id=doctor_id).count() > 0
+    if has_appointments:
+        flash("Cannot delete doctor with existing appointments.", "warning")
+        return redirect(url_for('admin_doctors'))
+
+    db.session.delete(doctor)
+    db.session.commit()
+    flash("Doctor removed permanently.", "danger")
+    return redirect(url_for('admin_doctors'))
+
+@app.route('/admin/appointments')
+@admin_required
+def admin_appointments():
+    filter_type = request.args.get('filter')  # upcoming or past
+    today = date.today()
+    if filter_type == 'past':
+        appts = Appointment.query.filter(Appointment.date < today).order_by(Appointment.date.desc()).all()
+    else:
+        # default upcoming
+        appts = Appointment.query.filter(Appointment.date >= today).order_by(Appointment.date).all()
+
+    return render_template('admin_appointments.html', appointments=appts, filter_type=filter_type)
+
+@app.route('/admin/appointments/<int:appt_id>/status', methods=['POST'])
+@admin_required
+def admin_change_appointment_status(appt_id):
+    new_status = request.form.get('status')  # Completed / Cancelled / Booked
+    appt = Appointment.query.get_or_404(appt_id)
+    appt.status = new_status
+    db.session.commit()
+    flash("Appointment status updated", "success")
+    return redirect(url_for('admin_appointments'))
+
+#Admin searches patients
+@app.route('/admin/patients')
+@admin_required
+def admin_patients():
+    q = request.args.get('q')
+    if q:
+        patients = Patient.query.filter(
+            db.or_(Patient.name.ilike(f'%{q}%'),
+                   Patient.email.ilike(f'%{q}%'),
+                   Patient.contact.ilike(f'%{q}%'),
+                   Patient.id == q if q.isdigit() else False)
+        ).all()
+    else:
+        patients = Patient.query.all()
+
+    return render_template('admin_patients.html', patients=patients)
+
+#To blacklist patient
+@app.route('/admin/patients/<int:patient_id>/toggle_active')
+@admin_required
+def admin_toggle_patient(patient_id):
+    patient = Patient.query.get_or_404(patient_id)
+    patient.is_active = not patient.is_active
+    db.session.commit()
+    msg = "activated" if patient.is_active else "blacklisted"
+    flash(f"Patient {msg}", "info")
+    return redirect(url_for('admin_patients'))
+
+@app.route('/admin/patients/<int:patient_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_patient(patient_id):
+    patient = Patient.query.get_or_404(patient_id)
+
+    # Optional: prevent deletion if they have appointments
+    has_appointments = Appointment.query.filter_by(patient_id=patient_id).count() > 0
+    if has_appointments:
+        flash("Cannot delete patient with existing appointments.", "warning")
+        return redirect(url_for('admin_patients'))
+
+    db.session.delete(patient)
+    db.session.commit()
+    flash("Patient removed permanently.", "danger")
+    return redirect(url_for('admin_patients'))
 
 
 @app.route('/logout')

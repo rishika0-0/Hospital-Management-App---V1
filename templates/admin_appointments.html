@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Manage Appointments | HMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container mt-5">
+
+  <h2 class="text-center mb-4">Manage Appointments</h2>
+
+  <!-- Filter Buttons -->
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <a href="{{ url_for('admin_appointments', filter='upcoming') }}" 
+         class="btn btn-outline-primary {% if filter_type != 'past' %}active{% endif %}">
+        Upcoming
+      </a>
+      <a href="{{ url_for('admin_appointments', filter='past') }}" 
+         class="btn btn-outline-secondary {% if filter_type == 'past' %}active{% endif %}">
+        Past
+      </a>
+    </div>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">← Back to Dashboard</a>
+  </div>
+
+  <!-- Appointments Table -->
+  <div class="table-responsive">
+    <table class="table table-striped table-hover align-middle">
+      <thead class="table-dark">
+        <tr>
+          <th>ID</th>
+          <th>Doctor</th>
+          <th>Patient</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Status</th>
+          <th class="text-center">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for appt in appointments %}
+        <tr>
+          <td>{{ appt.id }}</td>
+          <td>{{ appt.doctor.name if appt.doctor else 'N/A' }}</td>
+          <td>{{ appt.patient.name if appt.patient else 'N/A' }}</td>
+          <td>{{ appt.date.strftime('%Y-%m-%d') }}</td>
+          <td>{{ appt.time.strftime('%H:%M') }}</td>
+          <td>
+            {% if appt.status == 'Booked' %}
+              <span class="badge bg-info text-dark">Booked</span>
+            {% elif appt.status == 'Completed' %}
+              <span class="badge bg-success">Completed</span>
+            {% elif appt.status == 'Cancelled' %}
+              <span class="badge bg-danger">Cancelled</span>
+            {% else %}
+              <span class="badge bg-secondary">{{ appt.status }}</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            <form method="POST" action="{{ url_for('admin_change_appointment_status', appt_id=appt.id) }}" class="d-inline">
+              <select name="status" class="form-select form-select-sm d-inline w-auto">
+                <option value="Booked" {% if appt.status == 'Booked' %}selected{% endif %}>Booked</option>
+                <option value="Completed" {% if appt.status == 'Completed' %}selected{% endif %}>Completed</option>
+                <option value="Cancelled" {% if appt.status == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+              </select>
+              <button type="submit" class="btn btn-sm btn-primary">Update</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">No appointments found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Flash Messages -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="mt-4">
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+</body>
+</html>

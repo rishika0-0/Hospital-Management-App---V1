@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Edit Doctor | HMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script>
+    function updateAvailability() {
+      const startDay = document.getElementById("start_day").value;
+      const endDay = document.getElementById("end_day").value;
+      const startTime = document.getElementById("start_time").value;
+      const endTime = document.getElementById("end_time").value;
+
+      if (startDay && endDay && startTime && endTime) {
+        document.getElementById("availability").value =
+          `${startDay}–${endDay}: ${startTime}–${endTime}`;
+      }
+    }
+
+    // Pre-fill dropdowns if doctor already has availability (e.g. "Mon–Fri: 10:00–16:00")
+    window.onload = function () {
+      const current = "{{ doctor.availability or '' }}";
+      if (current.includes(":")) {
+        try {
+          const [days, times] = current.split(":").map(s => s.trim());
+          const [startDay, endDay] = days.split("–");
+          const [startTime, endTime] = times.split("–");
+
+          document.getElementById("start_day").value = startDay;
+          document.getElementById("end_day").value = endDay;
+          document.getElementById("start_time").value = startTime;
+          document.getElementById("end_time").value = endTime;
+        } catch (e) {
+          console.log("Could not parse availability");
+        }
+      }
+    };
+  </script>
+</head>
+
+<body class="container mt-5">
+
+  <h3 class="text-center mb-4">Edit Doctor Details</h3>
+
+  <form method="POST" class="border p-4 rounded shadow-sm bg-light">
+    <!-- Name -->
+    <div class="mb-3">
+      <label for="name" class="form-label">Doctor Name</label>
+      <input type="text" id="name" name="name" class="form-control" value="{{ doctor.name }}" required>
+    </div>
+
+    <!-- Email -->
+    <div class="mb-3">
+      <label for="email" class="form-label">Email</label>
+      <input type="email" id="email" name="email" class="form-control" value="{{ doctor.email }}" required>
+    </div>
+
+    <!-- Password (Optional) -->
+    <div class="mb-3">
+      <label for="password" class="form-label">New Password (optional)</label>
+      <input type="password" id="password" name="password" class="form-control" placeholder="Leave blank to keep current password">
+    </div>
+
+    <!-- Department -->
+    <div class="mb-3">
+      <label for="department" class="form-label">Department / Specialization</label>
+      <select id="department" name="department" class="form-select" required>
+        {% for dept in departments %}
+          <option value="{{ dept.id }}" {% if dept.id == doctor.specialization_id %}selected{% endif %}>
+            {{ dept.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Availability -->
+    <div class="mb-3">
+      <label class="form-label">Availability</label>
+      <div class="row g-2">
+        <div class="col-md-3">
+          <select id="start_day" class="form-select" onchange="updateAvailability()" required>
+            <option value="" disabled selected>Start Day</option>
+            <option>Mon</option><option>Tue</option><option>Wed</option>
+            <option>Thu</option><option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select id="end_day" class="form-select" onchange="updateAvailability()" required>
+            <option value="" disabled selected>End Day</option>
+            <option>Mon</option><option>Tue</option><option>Wed</option>
+            <option>Thu</option><option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <input type="time" id="start_time" class="form-control" onchange="updateAvailability()" required>
+        </div>
+        <div class="col-md-3">
+          <input type="time" id="end_time" class="form-control" onchange="updateAvailability()" required>
+        </div>
+      </div>
+      <input type="hidden" name="availability" id="availability" value="{{ doctor.availability }}">
+      <div class="form-text mt-2">Example: Mon–Fri: 10:00–16:00</div>
+    </div>
+
+    <button type="submit" class="btn btn-success w-100 mt-3">Update Doctor</button>
+  </form>
+
+  <div class="text-center mt-3">
+    <a href="{{ url_for('admin_doctors') }}" class="btn btn-secondary">Back to Doctor List</a>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="mt-4">
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+</body>
+</html>

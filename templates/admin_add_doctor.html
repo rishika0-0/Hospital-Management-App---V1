@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Add Doctor | HMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <script>
+    function updateAvailability() {
+      const startDay = document.getElementById("start_day").value;
+      const endDay = document.getElementById("end_day").value;
+      const startTime = document.getElementById("start_time").value;
+      const endTime = document.getElementById("end_time").value;
+
+      if (startDay && endDay && startTime && endTime) {
+        document.getElementById("availability").value =
+          `${startDay}–${endDay}: ${startTime}–${endTime}`;
+      }
+    }
+  </script>
+</head>
+<body class="container mt-5">
+  <h3 class="text-center mb-4">Add a New Doctor</h3>
+
+  <form method="POST" class="border p-4 rounded shadow-sm">
+    <input type="text" name="name" placeholder="Doctor Name" class="form-control mb-3" required>
+    <input type="email" name="email" placeholder="Doctor Email" class="form-control mb-3" required>
+    <input type="password" name="password" placeholder="Password" class="form-control mb-3" required>
+
+    <label>Department</label>
+    <select name="department" class="form-control mb-3" required>
+      {% for dept in departments %}
+        <option value="{{ dept.id }}">{{ dept.name }}</option>
+      {% endfor %}
+    </select>
+
+     <!-- Availability -->
+    <div class="mb-3">
+      <label class="form-label">Availability</label>
+      <div class="row g-2">
+        <div class="col-md-3">
+          <select id="start_day" class="form-select" onchange="updateAvailability()" required>
+            <option value="" disabled selected>Start Day</option>
+            <option>Mon</option><option>Tue</option><option>Wed</option>
+            <option>Thu</option><option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select id="end_day" class="form-select" onchange="updateAvailability()" required>
+            <option value="" disabled selected>End Day</option>
+            <option>Mon</option><option>Tue</option><option>Wed</option>
+            <option>Thu</option><option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <input type="time" id="start_time" class="form-control" onchange="updateAvailability()" required>
+        </div>
+        <div class="col-md-3">
+          <input type="time" id="end_time" class="form-control" onchange="updateAvailability()" required>
+        </div>
+      </div>
+
+      <!-- Hidden field that stores the formatted string -->
+      <input type="hidden" name="availability" id="availability">
+      <div class="form-text mt-2">Example: Mon–Fri: 10:00–16:00</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary w-100 mt-3">Add Doctor</button>
+  </form>
+
+  <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary mt-3">Back to Dashboard</a>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} mt-3">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+</body>
+</html>
