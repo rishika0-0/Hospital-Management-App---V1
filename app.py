@@ -1,8 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-from models import db, Admin, Doctor, Patient, Department, Appointment
+from models import db, Admin, Doctor, Patient, Department, Appointment, Treatment
 from config import Config
 from flask_bcrypt import Bcrypt
-from datetime import date
+from datetime import date,timedelta
 
 
 bcrypt = Bcrypt()
@@ -60,6 +60,7 @@ def login():
         if doctor and bcrypt.check_password_hash(doctor.password, password):
             session['role'] = 'doctor'
             session['user'] = doctor.name
+            session['doctor_id'] = doctor.id
             return redirect(url_for('doctor_dashboard'))
 
         # Check Patient
@@ -132,12 +133,30 @@ def doctor_required(func):
         return func(*args, **kwargs)
     return wrapper
 
-@app.route('/doctor')
-def doctor_dashboard():
-    if session.get('role') != 'doctor':
-        return redirect(url_for('login'))
-    return render_template('doctor_dashboard.html', user=session['user'])
 
+@app.route('/doctor')
+@doctor_required
+def doctor_dashboard():
+    doctor_id = session.get('doctor_id')
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    # Appointments for the upcoming week
+    weekly_appointments = Appointment.query.filter(
+        Appointment.doctor_id == doctor_id,
+        Appointment.date >= today,
+        Appointment.date <= week_later
+    ).order_by(Appointment.date, Appointment.start_time).all()
+
+    # Today-only appointments
+    todays_appointments = [a for a in weekly_appointments if a.date == today]
+
+    return render_template(
+        'doctor_dashboard.html',
+        user=session.get('user'),
+        todays_appointments=todays_appointments,
+        weekly_appointments=weekly_appointments
+    )
 def patient_required(func):
     from functools import wraps
     @wraps(func)
@@ -304,6 +323,74 @@ def admin_delete_patient(patient_id):
     flash("Patient removed permanently.", "danger")
     return redirect(url_for('admin_patients'))
 
+@app.route('/doctor/appointments/<int:appt_id>', methods=['GET', 'POST'])
+@doctor_required
+def doctor_view_appointment(appt_id):
+    doctor_id = session.get('doctor_id')
+    appt = Appointment.query.get_or_404(appt_id)
+
+    # Security: ensure this appointment belongs to logged-in doctor
+    if appt.doctor_id != doctor_id:
+        flash("You are not allowed to access this appointment.", "danger")
+        return redirect(url_for('doctor_dashboard'))
+
+    if request.method == 'POST':
+        # Update status
+        status = request.form.get('status')
+        if status in ['Booked', 'Completed', 'Cancelled']:
+            appt.status = status
+
+        # Create or update treatment record
+        diagnosis = request.form.get('diagnosis')
+        prescription = request.form.get('prescription')
+        notes = request.form.get('notes')
+
+        if appt.treatment:
+            appt.treatment.diagnosis = diagnosis
+            appt.treatment.prescription = prescription
+            appt.treatment.notes = notes
+        else:
+            treatment = Treatment(
+                appointment_id=appt.id,
+                diagnosis=diagnosis,
+                prescription=prescription,
+                notes=notes
+            )
+            db.session.add(treatment)
+
+        db.session.commit()
+        flash("Appointment and treatment updated.", "success")
+        return redirect(url_for('doctor_view_appointment', appt_id=appt.id))
+
+    return render_template('doctor_appointment_detail.html', appt=appt)
+
+@app.route('/doctor/patients/<int:patient_id>/history')
+@doctor_required
+def doctor_patient_history(patient_id):
+    # Optional: you can restrict to appointments of this doctor only,
+    # or show full history with all doctors.
+    patient = Patient.query.get_or_404(patient_id)
+
+    # Show all completed appointments with treatments
+    appointments = Appointment.query.filter_by(
+        patient_id=patient_id
+    ).order_by(Appointment.date.desc(), Appointment.start_time.desc()).all()
+
+    return render_template('doctor_patient_history.html', patient=patient, appointments=appointments)
+
+@app.route('/doctor/availability', methods=['GET', 'POST'])
+@doctor_required
+def doctor_manage_availability():
+    doctor = Doctor.query.get_or_404(session.get('doctor_id'))
+
+    if request.method == 'POST':
+        availability = request.form.get('availability')
+        doctor.availability = availability
+        db.session.commit()
+        flash("Availability updated.", "success")
+        return redirect(url_for('doctor_manage_availability'))
+
+    return render_template('doctor_availability.html', doctor=doctor)
 
 @app.route('/logout')
 def logout():

@@ -44,7 +44,7 @@
           <td>{{ appt.doctor.name if appt.doctor else 'N/A' }}</td>
           <td>{{ appt.patient.name if appt.patient else 'N/A' }}</td>
           <td>{{ appt.date.strftime('%Y-%m-%d') }}</td>
-          <td>{{ appt.time.strftime('%H:%M') }}</td>
+          <td>{{ appt.start_time.strftime('%H:%M') }}-{{ appt.end_time.strftime('%H:%M') }}</td>
           <td>
             {% if appt.status == 'Booked' %}
               <span class="badge bg-info text-dark">Booked</span>
