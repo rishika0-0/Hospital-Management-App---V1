@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Book Appointment | HMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    /* improve select option readability on some browsers */
+    .slot-option-booked { color: #888; }
+  </style>
+</head>
+<body class="container mt-4">
+
+  <a href="{{ url_for('patient_dashboard') }}" class="btn btn-secondary mb-3">← Back to Dashboard</a>
+
+  <h3>Book Appointment with {{ doctor.name }}</h3>
+  <p>Specialization: {{ doctor.department.name if doctor.department else '' }}</p>
+
+  <form method="POST" class="mt-3">
+    <div class="mb-3">
+      <label class="form-label">Available Slots (next 7 days)</label>
+      <select name="slot_id" class="form-select" required>
+        <option value="" selected disabled>-- Select a slot --</option>
+
+        {% for s in slots %}
+          {% if not s.is_booked %}
+            <option value="{{ s.id }}">
+              {{ s.weekday }} {{ s.date_str }} — {{ s.start }} - {{ s.end }}
+            </option>
+          {% else %}
+            <option value="{{ s.id }}" disabled class="slot-option-booked">
+              {{ s.weekday }} {{ s.date_str }} — {{ s.start }} - {{ s.end }} (Booked)
+            </option>
+          {% endif %}
+        {% endfor %}
+
+        {% if not slots %}
+          <option disabled>No slots available.</option>
+        {% endif %}
+      </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Book Appointment</button>
+  </form>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="mt-4">
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+</body>
+</html>

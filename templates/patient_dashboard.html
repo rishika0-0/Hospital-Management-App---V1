@@ -1,2 +1,135 @@
-<h2>Welcome, {{ user }}</h2>
-<a href="{{ url_for('logout') }}">Logout</a>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Patient Dashboard | HMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container-fluid mt-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3 px-3">
+    <h3>Welcome, {{ user }}</h3>
+    <div>
+      <a href="{{ url_for('patient_profile') }}" class="btn btn-outline-primary btn-sm">My Profile</a>
+      <a href="{{ url_for('logout') }}" class="btn btn-outline-danger btn-sm ms-2">Logout</a>
+    </div>
+  </div>
+
+  <div class="row px-3">
+    <!-- Left: Search + Departments -->
+    <div class="col-md-4 mb-4">
+      <div class="card mb-3">
+        <div class="card-header">Search Doctors</div>
+        <div class="card-body">
+          <form method="get" action="{{ url_for('patient_search_doctors') }}">
+            <div class="mb-2">
+              <input type="text" name="q" class="form-control" placeholder="Search by name or specialization">
+            </div>
+            <button class="btn btn-primary w-100">Search</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Available Specializations</div>
+        <ul class="list-group list-group-flush">
+          {% for dept in departments %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            {{ dept.name }}
+            <a href="{{ url_for('patient_search_doctors', dept_id=dept.id) }}"
+               class="btn btn-sm btn-outline-secondary">View Doctors</a>
+          </li>
+          {% else %}
+          <li class="list-group-item text-muted">No departments listed.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <!-- Right: Appointments -->
+    <div class="col-md-8">
+      <div class="card mb-3">
+        <div class="card-header">Upcoming Appointments</div>
+        <div class="card-body table-responsive">
+          <table class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Doctor</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in upcoming %}
+              <tr>
+                <td>{{ a.date.strftime('%Y-%m-%d') }}</td>
+                <td>{{ a.start_time.strftime('%H:%M') }} - {{ a.end_time.strftime('%H:%M') }}</td>
+                <td>{{ a.doctor.name }}</td>
+                <td>{{ a.status }}</td>
+                <td>
+                  <a href="{{ url_for('patient_view_appointment', appt_id=a.id) }}"
+                     class="btn btn-sm btn-outline-primary">Details</a>
+                  
+                  {% if a.status == 'Booked' %}
+                    <a href="{{ url_for('patient_reschedule_appointment', appt_id=a.id) }}"
+                      class="btn btn-sm btn-outline-primary">
+                      Reschedule
+                    </a>
+
+                    <a href="{{ url_for('patient_cancel_appointment', appt_id=a.id) }}"
+                       class="btn btn-sm btn-outline-danger"
+                       onclick="return confirm('Cancel this appointment?');">Cancel</a>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-muted text-center">No upcoming appointments.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Past Appointments & History</div>
+        <div class="card-body table-responsive">
+          <table class="table table-bordered align-middle">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Doctor</th>
+                <th>Diagnosis</th>
+                <th>Prescription</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in past %}
+              <tr>
+                <td>{{ a.date.strftime('%Y-%m-%d') }}</td>
+                <td>{{ a.doctor.name }}</td>
+                <td>{{ a.treatment.diagnosis if a.treatment else '—' }}</td>
+                <td>{{ a.treatment.prescription if a.treatment else '—' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-muted text-center">No past records.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="container mt-3">
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+</body>
+</html>

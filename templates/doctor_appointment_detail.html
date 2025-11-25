@@ -52,6 +52,7 @@
   <a href="{{ url_for('doctor_patient_history', patient_id=appt.patient_id) }}" class="btn btn-outline-info btn-sm">
     View Full History
   </a>
+  <br><br>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}

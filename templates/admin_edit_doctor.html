@@ -12,25 +12,26 @@
 
       if (startDay && endDay && startTime && endTime) {
         document.getElementById("availability").value =
-          `${startDay}–${endDay}: ${startTime}–${endTime}`;
+          `${startDay}-${endDay} ${startTime}-${endTime}`;
       }
     }
 
     // Pre-fill dropdowns if doctor already has availability (e.g. "Mon–Fri: 10:00–16:00")
     window.onload = function () {
       const current = "{{ doctor.availability or '' }}";
-      if (current.includes(":")) {
+      if (current.includes(" ")) {
         try {
-          const [days, times] = current.split(":").map(s => s.trim());
-          const [startDay, endDay] = days.split("–");
-          const [startTime, endTime] = times.split("–");
+          // e.g. "Mon-Fri 07:00-13:00"
+          const [days, times] = current.split(" ").map(s => s.trim());
+          const [startDay, endDay] = days.split("-");
+          const [startTime, endTime] = times.split("-");
 
           document.getElementById("start_day").value = startDay;
           document.getElementById("end_day").value = endDay;
           document.getElementById("start_time").value = startTime;
           document.getElementById("end_time").value = endTime;
         } catch (e) {
-          console.log("Could not parse availability");
+          console.log("Could not parse availability", e);
         }
       }
     };
@@ -98,7 +99,7 @@
         </div>
       </div>
       <input type="hidden" name="availability" id="availability" value="{{ doctor.availability }}">
-      <div class="form-text mt-2">Example: Mon–Fri: 10:00–16:00</div>
+      <div class="form-text mt-2">Example: Mon-Fri 10:00-16:00</div>
     </div>
 
     <button type="submit" class="btn btn-success w-100 mt-3">Update Doctor</button>

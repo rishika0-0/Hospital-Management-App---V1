@@ -11,34 +11,33 @@
   <h3>Medical History: {{ patient.name }}</h3>
   <p>Email: {{ patient.email }} | Contact: {{ patient.contact or 'N/A' }}</p>
 
-  <div class="table-responsive mt-4">
-    <table class="table table-striped table-hover align-middle">
-      <thead class="table-dark">
-        <tr>
-          <th>Date</th>
-          <th>Time</th>
-          <th>Doctor</th>
-          <th>Status</th>
-          <th>Diagnosis</th>
-          <th>Prescription</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for a in appointments %}
-        <tr>
-          <td>{{ a.date.strftime('%Y-%m-%d') }}</td>
-          <td>{{ a.time.strftime('%H:%M') }}</td>
-          <td>{{ a.doctor.name if a.doctor else 'N/A' }}</td>
-          <td>{{ a.status }}</td>
-          <td>{{ a.treatment.diagnosis if a.treatment else '—' }}</td>
-          <td>{{ a.treatment.prescription if a.treatment else '—' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="6" class="text-muted text-center">No records found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+
+  <table class="table table-striped">
+    <thead class="table-dark">
+    <tr>
+      <th>Date</th>
+      <th>Time</th>
+      <th>Doctor</th>
+      <th>Status</th>
+      <th>Diagnosis</th>
+      <th>Prescription</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in appointments %}
+      <tr>
+        <td>{{ a.date.strftime('%Y-%m-%d') }}</td>
+        <td>{{ a.start_time.strftime('%H:%M') }} - {{ a.end_time.strftime('%H:%M') }}</td>
+        <td>{{ a.doctor.name }}</td>
+        <td>{{ a.status }}</td>
+        <td>{{ a.treatment.diagnosis if a.treatment else '-' }}</td>
+        <td>{{ a.treatment.prescription if a.treatment else '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-muted text-center">No records found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 
 </body>
 </html>

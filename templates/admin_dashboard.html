@@ -142,7 +142,7 @@
       <td>{{ a.doctor.name }}</td>
       <td>{{ a.patient.name }}</td>
       <td>{{ a.date }}</td>
-      <td>{{ a.time }}</td>
+      <td>{{ a.start_time.strftime('%H:%M') }} - {{ a.end_time.strftime('%H:%M') }}</td>      
       <td>{{ a.status }}</td>
     </tr>
     {% endfor %}

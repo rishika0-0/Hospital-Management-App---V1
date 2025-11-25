@@ -1,11 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-from models import db, Admin, Doctor, Patient, Department, Appointment, Treatment
+from models import db, Admin, Doctor, Patient, Department, Appointment, Treatment, DoctorAvailability
 from config import Config
 from flask_bcrypt import Bcrypt
-from datetime import date,timedelta
-
+from datetime import date, timedelta, time as time_cls, datetime as dt_cls
+import re
 
 bcrypt = Bcrypt()
+
 
 def create_app():
     app = Flask(__name__)
@@ -25,7 +26,7 @@ def create_app():
             db.session.commit()
             print("✅ Default admin created: username='admin', password='admin123'")
 
-        from models import Department
+        # ✅ Default departments
         if Department.query.count() == 0:
             default_departments = [
                 Department(name="Cardiology", description="Heart specialist"),
@@ -41,6 +42,118 @@ def create_app():
 
 
 app = create_app()
+
+# ---------- AVAILABILITY PARSING & SLOT GENERATION HELPERS ---------- #
+
+DAY_MAP = {
+    "Mon": 0,
+    "Tue": 1,
+    "Wed": 2,
+    "Thu": 3,
+    "Fri": 4,
+    "Sat": 5,
+    "Sun": 6,
+}
+
+
+def parse_availability_string(avail_str):
+    """
+    Parses strings like:
+      "Mon-Fri 07:00-13:00"
+      "Mon,Wed,Fri 09:00-12:00"
+
+    Returns: (allowed_weekdays, start_time, end_time)
+      allowed_weekdays -> set[int] (0=Mon..6=Sun)
+      start_time/end_time -> datetime.time or None
+    """
+    if not avail_str:
+        return set(), None, None
+    
+    avail_str = avail_str.replace("–", "-").strip()
+
+    try:
+        avail_str = avail_str.strip()
+        parts = avail_str.split()
+        if len(parts) != 2:
+            return set(), None, None
+
+        days_part, time_part = parts
+        time_start_str, time_end_str = time_part.split("-")
+        start_time = dt_cls.strptime(time_start_str, "%H:%M").time()
+        end_time = dt_cls.strptime(time_end_str, "%H:%M").time()
+
+        allowed_days = set()
+
+        # Range like "Mon-Fri"
+        if "-" in days_part and "," not in days_part:
+            start_day, end_day = days_part.split("-")
+            start_idx = DAY_MAP.get(start_day)
+            end_idx = DAY_MAP.get(end_day)
+            if start_idx is None or end_idx is None:
+                return set(), None, None
+            for d in range(start_idx, end_idx + 1):
+                allowed_days.add(d)
+        else:
+            # Comma-separated like "Mon,Wed,Fri"
+            for token in days_part.split(","):
+                token = token.strip()
+                if token in DAY_MAP:
+                    allowed_days.add(DAY_MAP[token])
+
+        return allowed_days, start_time, end_time
+    except Exception:
+        return set(), None, None
+
+
+def regenerate_availability_slots(doctor):
+    """
+    Use doctor.availability (e.g. "Mon-Fri 07:00-13:00")
+    and create 1-hour slots for the next 7 days in DoctorAvailability.
+    Any old slots for this doctor are deleted first.
+    """
+    
+    allowed_days, start_time, end_time = parse_availability_string(doctor.availability)
+
+    # clear old slots
+    DoctorAvailability.query.filter_by(doctor_id=doctor.id).delete()
+    db.session.commit()
+
+    if not allowed_days or not start_time or not end_time:
+        # nothing valid to generate
+        return
+
+    today = date.today()
+
+    for i in range(7):
+        d = today + timedelta(days=i)
+        if d.weekday() not in allowed_days:
+            continue
+
+        # Generate 1-hour blocks
+        current_hour = start_time.hour
+        while True:
+            slot_start = time_cls(current_hour, start_time.minute)
+            next_hour = current_hour + 1
+            slot_end = time_cls(next_hour, start_time.minute)
+
+            # stop if the end exceeds doctor's end_time
+            if slot_end > end_time:
+                break
+
+            db.session.add(DoctorAvailability(
+                doctor_id=doctor.id,
+                date=d,
+                start_time=slot_start,
+                end_time=slot_end,
+                is_available=True
+            ))
+
+            current_hour += 1
+
+    db.session.commit()
+
+
+# ------------------------ AUTH & COMMON ROUTES ------------------------ #
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -68,11 +181,13 @@ def login():
         if patient and bcrypt.check_password_hash(patient.password, password):
             session['role'] = 'patient'
             session['user'] = patient.name
+            session['patient_id'] = patient.id
             return redirect(url_for('patient_dashboard'))
 
         flash("Invalid credentials. Please try again.", "danger")
 
     return render_template('login.html')
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -94,90 +209,78 @@ def register():
 
     return render_template('register.html')
 
-# Utility: ensures admin-only access
+
+# --------- ROLE DECORATORS --------- #
+
 def admin_required(func):
     from functools import wraps
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         if session.get('role') != 'admin':
             flash("Admin login required", "warning")
             return redirect(url_for('login'))
         return func(*args, **kwargs)
+
     return wrapper
-
-@app.route('/admin/dashboard')
-@admin_required
-def admin_dashboard():
-    # totals
-    total_doctors = Doctor.query.filter_by(is_active=True).count()
-    total_patients = Patient.query.filter_by(is_active=True).count()
-    total_appointments = Appointment.query.count()
-
-    # upcoming appointments next 7 days for quick view
-    today = date.today()
-    upcoming = Appointment.query.filter(Appointment.date >= today).order_by(Appointment.date).limit(10).all()
-
-    return render_template('admin_dashboard.html',
-                           total_doctors=total_doctors,
-                           total_patients=total_patients,
-                           total_appointments=total_appointments,
-                           upcoming=upcoming)
 
 def doctor_required(func):
     from functools import wraps
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         if session.get('role') != 'doctor':
             flash("Doctor login required", "warning")
             return redirect(url_for('login'))
         return func(*args, **kwargs)
+
     return wrapper
 
 
-@app.route('/doctor')
-@doctor_required
-def doctor_dashboard():
-    doctor_id = session.get('doctor_id')
-    today = date.today()
-    week_later = today + timedelta(days=7)
-
-    # Appointments for the upcoming week
-    weekly_appointments = Appointment.query.filter(
-        Appointment.doctor_id == doctor_id,
-        Appointment.date >= today,
-        Appointment.date <= week_later
-    ).order_by(Appointment.date, Appointment.start_time).all()
-
-    # Today-only appointments
-    todays_appointments = [a for a in weekly_appointments if a.date == today]
-
-    return render_template(
-        'doctor_dashboard.html',
-        user=session.get('user'),
-        todays_appointments=todays_appointments,
-        weekly_appointments=weekly_appointments
-    )
 def patient_required(func):
     from functools import wraps
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         if session.get('role') != 'patient':
             flash("Patient login required", "warning")
             return redirect(url_for('login'))
         return func(*args, **kwargs)
+
     return wrapper
 
-@app.route('/patient')
-def patient_dashboard():
-    if session.get('role') != 'patient':
-        return redirect(url_for('login'))
-    return render_template('patient_dashboard.html', user=session['user'])
+
+# ------------------------ ADMIN ROUTES ------------------------ #
+
+@app.route('/admin/dashboard')
+@admin_required
+def admin_dashboard():
+    total_doctors = Doctor.query.filter_by(is_active=True).count()
+    total_patients = Patient.query.filter_by(is_active=True).count()
+    total_appointments = Appointment.query.count()
+
+    today = date.today()
+    upcoming = Appointment.query.filter(
+        Appointment.date >= today
+        ).order_by(Appointment.date, Appointment.start_time).limit(10).all()
+    
+    print("Upcoming count:", len(upcoming))
+    for a in upcoming:
+        print("Appt", a.id, a.date, a.start_time, a.end_time, a.status)
+
+    return render_template(
+        'admin_dashboard.html',
+        total_doctors=total_doctors,
+        total_patients=total_patients,
+        total_appointments=total_appointments,
+        upcoming=upcoming
+    )
+
 
 @app.route('/admin/doctors')
 @admin_required
 def admin_doctors():
     q = request.args.get('q')
-    # allow search by name or specialization
     if q:
         doctors = Doctor.query.join(Department).filter(
             db.or_(Doctor.name.ilike(f'%{q}%'),
@@ -187,7 +290,7 @@ def admin_doctors():
         doctors = Doctor.query.all()
     return render_template('admin_doctors.html', doctors=doctors)
 
-#Admin adds, Edits, Blacklists, removes Doctors
+
 @app.route('/admin/doctors/add', methods=['GET', 'POST'])
 @admin_required
 def admin_add_doctor():
@@ -197,15 +300,25 @@ def admin_add_doctor():
         email = request.form['email']
         dept_id = request.form['department']
         password = bcrypt.generate_password_hash(request.form['password']).decode('utf-8')
-        availability = request.form.get('availability')  # text field, free format or JSON-string
+        availability = request.form.get('availability')  # e.g. "Mon-Fri 07:00-13:00"
 
         if Doctor.query.filter_by(email=email).first():
             flash("Doctor email already exists", "warning")
             return redirect(url_for('admin_add_doctor'))
 
-        doc = Doctor(name=name, email=email, password=password, specialization_id=dept_id, availability=availability)
+        doc = Doctor(
+            name=name,
+            email=email,
+            password=password,
+            specialization_id=dept_id,
+            availability=availability
+        )
         db.session.add(doc)
         db.session.commit()
+
+        # 🔁 generate 1-hour slots for the next 7 days based on availability
+        regenerate_availability_slots(doc)
+
         flash("Doctor added successfully", "success")
         return redirect(url_for('admin_doctors'))
 
@@ -218,16 +331,26 @@ def admin_edit_doctor(doctor_id):
     doctor = Doctor.query.get_or_404(doctor_id)
     departments = Department.query.all()
     if request.method == 'POST':
+        old_avail = doctor.availability
+
         doctor.name = request.form['name']
         doctor.email = request.form['email']
         doctor.specialization_id = request.form['department']
         doctor.availability = request.form.get('availability')
+
         pw = request.form.get('password')
         if pw:
             doctor.password = bcrypt.generate_password_hash(pw).decode('utf-8')
+
         db.session.commit()
+
+        # if availability changed, regenerate slots
+        if doctor.availability != old_avail:
+            regenerate_availability_slots(doctor)
+
         flash("Doctor updated", "success")
         return redirect(url_for('admin_doctors'))
+
     return render_template('admin_edit_doctor.html', doctor=doctor, departments=departments)
 
 
@@ -241,11 +364,11 @@ def admin_toggle_doctor(doctor_id):
     flash(f"Doctor {msg}.", "info")
     return redirect(url_for('admin_doctors'))
 
+
 @app.route('/admin/doctors/<int:doctor_id>/delete', methods=['POST'])
 @admin_required
 def admin_delete_doctor(doctor_id):
     doctor = Doctor.query.get_or_404(doctor_id)
-
     has_appointments = Appointment.query.filter_by(doctor_id=doctor_id).count() > 0
     if has_appointments:
         flash("Cannot delete doctor with existing appointments.", "warning")
@@ -256,47 +379,53 @@ def admin_delete_doctor(doctor_id):
     flash("Doctor removed permanently.", "danger")
     return redirect(url_for('admin_doctors'))
 
+
 @app.route('/admin/appointments')
 @admin_required
 def admin_appointments():
-    filter_type = request.args.get('filter')  # upcoming or past
+    filter_type = request.args.get('filter')
     today = date.today()
     if filter_type == 'past':
-        appts = Appointment.query.filter(Appointment.date < today).order_by(Appointment.date.desc()).all()
+        appts = Appointment.query.filter(
+            Appointment.date < today
+        ).order_by(Appointment.date.desc(), Appointment.start_time.desc()).all()
     else:
-        # default upcoming
-        appts = Appointment.query.filter(Appointment.date >= today).order_by(Appointment.date).all()
+        appts = Appointment.query.filter(
+            Appointment.date >= today
+        ).order_by(Appointment.date, Appointment.start_time).all()
 
     return render_template('admin_appointments.html', appointments=appts, filter_type=filter_type)
+
 
 @app.route('/admin/appointments/<int:appt_id>/status', methods=['POST'])
 @admin_required
 def admin_change_appointment_status(appt_id):
-    new_status = request.form.get('status')  # Completed / Cancelled / Booked
+    new_status = request.form.get('status')
     appt = Appointment.query.get_or_404(appt_id)
     appt.status = new_status
     db.session.commit()
     flash("Appointment status updated", "success")
     return redirect(url_for('admin_appointments'))
 
-#Admin searches patients
 @app.route('/admin/patients')
 @admin_required
 def admin_patients():
     q = request.args.get('q')
     if q:
         patients = Patient.query.filter(
-            db.or_(Patient.name.ilike(f'%{q}%'),
-                   Patient.email.ilike(f'%{q}%'),
-                   Patient.contact.ilike(f'%{q}%'),
-                   Patient.id == q if q.isdigit() else False)
+            db.or_(
+                Patient.name.ilike(f'%{q}%'),
+                Patient.email.ilike(f'%{q}%'),
+                Patient.contact.ilike(f'%{q}%'),
+                Patient.id == q if q.isdigit() else False
+            )
         ).all()
     else:
         patients = Patient.query.all()
 
     return render_template('admin_patients.html', patients=patients)
 
-#To blacklist patient
+
 @app.route('/admin/patients/<int:patient_id>/toggle_active')
 @admin_required
 def admin_toggle_patient(patient_id):
@@ -307,12 +436,11 @@ def admin_toggle_patient(patient_id):
     flash(f"Patient {msg}", "info")
     return redirect(url_for('admin_patients'))
 
+
 @app.route('/admin/patients/<int:patient_id>/delete', methods=['POST'])
 @admin_required
 def admin_delete_patient(patient_id):
     patient = Patient.query.get_or_404(patient_id)
-
-    # Optional: prevent deletion if they have appointments
     has_appointments = Appointment.query.filter_by(patient_id=patient_id).count() > 0
     if has_appointments:
         flash("Cannot delete patient with existing appointments.", "warning")
@@ -323,24 +451,66 @@ def admin_delete_patient(patient_id):
     flash("Patient removed permanently.", "danger")
     return redirect(url_for('admin_patients'))
 
+@app.route('/admin/patients/<int:patient_id>/history')
+@admin_required
+def admin_patient_history(patient_id):
+    patient = Patient.query.get_or_404(patient_id)
+
+    # All appointments for this patient (past + future), newest first
+    appointments = (
+        Appointment.query
+        .filter_by(patient_id=patient.id)
+        .order_by(Appointment.date.desc(), Appointment.start_time.desc())
+        .all()
+    )
+
+    return render_template(
+        'admin_patient_history.html',
+        patient=patient,
+        appointments=appointments
+    )
+
+
+# ------------------------ DOCTOR ROUTES ------------------------ #
+
+@app.route('/doctor')
+@doctor_required
+def doctor_dashboard():
+    doctor_id = session.get('doctor_id')
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    weekly_appointments = Appointment.query.filter(
+        Appointment.doctor_id == doctor_id,
+        Appointment.date >= today,
+        Appointment.date <= week_later
+    ).order_by(Appointment.date, Appointment.start_time).all()
+
+    todays_appointments = [a for a in weekly_appointments if a.date == today]
+
+    return render_template(
+        'doctor_dashboard.html',
+        user=session.get('user'),
+        todays_appointments=todays_appointments,
+        weekly_appointments=weekly_appointments
+    )
+
+
 @app.route('/doctor/appointments/<int:appt_id>', methods=['GET', 'POST'])
 @doctor_required
 def doctor_view_appointment(appt_id):
     doctor_id = session.get('doctor_id')
     appt = Appointment.query.get_or_404(appt_id)
 
-    # Security: ensure this appointment belongs to logged-in doctor
     if appt.doctor_id != doctor_id:
         flash("You are not allowed to access this appointment.", "danger")
         return redirect(url_for('doctor_dashboard'))
 
     if request.method == 'POST':
-        # Update status
         status = request.form.get('status')
         if status in ['Booked', 'Completed', 'Cancelled']:
             appt.status = status
 
-        # Create or update treatment record
         diagnosis = request.form.get('diagnosis')
         prescription = request.form.get('prescription')
         notes = request.form.get('notes')
@@ -364,19 +534,17 @@ def doctor_view_appointment(appt_id):
 
     return render_template('doctor_appointment_detail.html', appt=appt)
 
+
 @app.route('/doctor/patients/<int:patient_id>/history')
 @doctor_required
 def doctor_patient_history(patient_id):
-    # Optional: you can restrict to appointments of this doctor only,
-    # or show full history with all doctors.
     patient = Patient.query.get_or_404(patient_id)
-
-    # Show all completed appointments with treatments
     appointments = Appointment.query.filter_by(
         patient_id=patient_id
     ).order_by(Appointment.date.desc(), Appointment.start_time.desc()).all()
 
     return render_template('doctor_patient_history.html', patient=patient, appointments=appointments)
+
 
 @app.route('/doctor/availability', methods=['GET', 'POST'])
 @doctor_required
@@ -384,13 +552,282 @@ def doctor_manage_availability():
     doctor = Doctor.query.get_or_404(session.get('doctor_id'))
 
     if request.method == 'POST':
-        availability = request.form.get('availability')
-        doctor.availability = availability
+        doctor.availability = request.form.get('availability')
         db.session.commit()
+        regenerate_availability_slots(doctor)
         flash("Availability updated.", "success")
         return redirect(url_for('doctor_manage_availability'))
 
     return render_template('doctor_availability.html', doctor=doctor)
+
+
+# ------------------------ PATIENT ROUTES ------------------------ #
+
+@app.route('/patient')
+@patient_required
+def patient_dashboard():
+    patient_id = session.get('patient_id')
+    today = date.today()
+
+    upcoming = Appointment.query.filter(
+        Appointment.patient_id == patient_id,
+        Appointment.date >= today
+    ).order_by(Appointment.date, Appointment.start_time).all()
+
+    past = Appointment.query.filter(
+        Appointment.patient_id == patient_id,
+        Appointment.date < today
+    ).order_by(Appointment.date.desc(), Appointment.start_time.desc()).all()
+
+    departments = Department.query.order_by(Department.name).all()
+
+    return render_template(
+        'patient_dashboard.html',
+        user=session.get('user'),
+        upcoming=upcoming,
+        past=past,
+        departments=departments
+    )
+
+
+@app.route('/patient/profile', methods=['GET', 'POST'])
+@patient_required
+def patient_profile():
+    patient = Patient.query.get_or_404(session.get('patient_id'))
+
+    today = date.today()
+
+    past_appointments = Appointment.query.filter(
+        Appointment.patient_id == patient.id,
+        Appointment.date < today
+    ).order_by(
+        Appointment.date.desc(),
+        Appointment.start_time.desc()
+    ).all()
+
+    if request.method == 'POST':
+        patient.name = request.form.get('name')
+        patient.email = request.form.get('email')
+        patient.contact = request.form.get('contact')
+        pw = request.form.get('password')
+        if pw:
+            patient.password = bcrypt.generate_password_hash(pw).decode('utf-8')
+        db.session.commit()
+        session['user'] = patient.name
+        flash("Profile updated.", "success")
+        return redirect(url_for('patient_profile'))
+
+    return render_template('patient_profile.html', patient=patient, past_appointments=past_appointments)
+
+
+@app.route('/patient/doctors')
+@patient_required
+def patient_search_doctors():
+    q = request.args.get('q', '').strip()
+    dept_id = request.args.get('dept_id')
+
+    query = Doctor.query.join(Department).filter(Doctor.is_active == True)
+
+    if q:
+        query = query.filter(
+            db.or_(
+                Doctor.name.ilike(f"%{q}%"),
+                Department.name.ilike(f"%{q}%")
+            )
+        )
+
+    if dept_id:
+        query = query.filter(Doctor.specialization_id == dept_id)
+
+    doctors = query.order_by(Doctor.name).all()
+
+    return render_template('patient_doctors.html', doctors=doctors, q=q)
+
+
+@app.route('/patient/doctors/<int:doctor_id>/book', methods=['GET', 'POST'])
+@patient_required
+def patient_book_appointment(doctor_id):
+    doctor = Doctor.query.get_or_404(doctor_id)
+    patient_id = session.get('patient_id')
+
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    # DB slots
+    db_slots = DoctorAvailability.query.filter(
+        DoctorAvailability.doctor_id == doctor_id,
+        DoctorAvailability.date >= today,
+        DoctorAvailability.date <= week_later,
+        DoctorAvailability.is_available == True
+    ).order_by(DoctorAvailability.date, DoctorAvailability.start_time).all()
+
+    # already booked appointments
+    booked = Appointment.query.filter(
+        Appointment.doctor_id == doctor_id,
+        Appointment.date >= today,
+        Appointment.date <= week_later,
+        Appointment.status != 'Cancelled'
+    ).all()
+
+    booked_set = {(b.date, b.start_time, b.end_time) for b in booked}
+
+    # build display slots with the fields your template expects
+    display_slots = []
+    for s in db_slots:
+        is_booked = (s.date, s.start_time, s.end_time) in booked_set
+        display_slots.append({
+            "id": s.id,
+            "weekday": s.date.strftime("%a"),            # Mon, Tue, ...
+            "date_str": s.date.strftime("%Y-%m-%d"),     # 2025-11-16
+            "start": s.start_time.strftime("%H:%M"),
+            "end": s.end_time.strftime("%H:%M"),
+            "is_booked": is_booked
+        })
+
+    if request.method == 'POST':
+        slot_id = request.form.get('slot_id')
+        selected = DoctorAvailability.query.get_or_404(slot_id)
+
+        if (selected.date, selected.start_time, selected.end_time) in booked_set:
+            flash("This slot is already booked. Please choose another.", "danger")
+            return redirect(url_for('patient_book_appointment', doctor_id=doctor_id))
+
+        appt = Appointment(
+            doctor_id=doctor_id,
+            patient_id=patient_id,
+            date=selected.date,
+            start_time=selected.start_time,
+            end_time=selected.end_time,
+            status='Booked'
+        )
+        db.session.add(appt)
+        db.session.commit()
+        flash("Appointment booked successfully!", "success")
+        return redirect(url_for('patient_dashboard'))
+
+    return render_template(
+        'patient_book_appointment.html',
+        doctor=doctor,
+        slots=display_slots,   # <- use display_slots here
+        booked_set=booked_set  # not strictly needed by template now
+    )
+
+
+@app.route('/patient/appointments/<int:appt_id>')
+@patient_required
+def patient_view_appointment(appt_id):
+    patient_id = session.get('patient_id')
+    appt = Appointment.query.get_or_404(appt_id)
+
+    if appt.patient_id != patient_id:
+        flash("You are not allowed to view this appointment.", "danger")
+        return redirect(url_for('patient_dashboard'))
+
+    return render_template('patient_appointment_detail.html', appt=appt)
+
+
+@app.route('/patient/appointments/<int:appt_id>/cancel')
+@patient_required
+def patient_cancel_appointment(appt_id):
+    patient_id = session.get('patient_id')
+    appt = Appointment.query.get_or_404(appt_id)
+
+    if appt.patient_id != patient_id:
+        flash("You are not allowed to cancel this appointment.", "danger")
+        return redirect(url_for('patient_dashboard'))
+
+    if appt.status == 'Booked':
+        appt.status = 'Cancelled'
+        db.session.commit()
+        flash("Appointment cancelled.", "info")
+    else:
+        flash("Only booked appointments can be cancelled.", "warning")
+
+    return redirect(url_for('patient_dashboard'))
+
+@app.route('/patient/appointments/<int:appt_id>/reschedule', methods=['GET', 'POST'])
+@patient_required
+def patient_reschedule_appointment(appt_id):
+    patient_id = session.get('patient_id')
+    appt = Appointment.query.get_or_404(appt_id)
+
+    # safety: appointment must belong to this patient
+    if appt.patient_id != patient_id:
+        flash("You are not allowed to reschedule this appointment.", "danger")
+        return redirect(url_for('patient_dashboard'))
+
+    # Optional: only allow rescheduling of Booked appointments
+    if appt.status != 'Booked':
+        flash("Only booked appointments can be rescheduled.", "warning")
+        return redirect(url_for('patient_dashboard'))
+
+    doctor = appt.doctor
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    # All availability slots for the doctor in next 7 days
+    base_slots = DoctorAvailability.query.filter(
+        DoctorAvailability.doctor_id == doctor.id,
+        DoctorAvailability.date >= today,
+        DoctorAvailability.date <= week_later,
+        DoctorAvailability.is_available == True
+    ).order_by(DoctorAvailability.date, DoctorAvailability.start_time).all()
+
+    # All other booked appointments of this doctor in the range
+    other_appts = Appointment.query.filter(
+        Appointment.doctor_id == doctor.id,
+        Appointment.date >= today,
+        Appointment.date <= week_later,
+        Appointment.status != 'Cancelled',
+        Appointment.id != appt.id     # exclude the current appointment
+    ).all()
+
+    booked_set = {(b.date, b.start_time, b.end_time) for b in other_appts}
+
+    # Build slot view objects like we did for booking
+    slots = []
+    for s in base_slots:
+        is_booked = (s.date, s.start_time, s.end_time) in booked_set
+        slots.append({
+            "id": s.id,
+            "weekday": s.date.strftime("%a"),
+            "date_str": s.date.strftime("%Y-%m-%d"),
+            "start": s.start_time.strftime("%H:%M"),
+            "end": s.end_time.strftime("%H:%M"),
+            "is_booked": is_booked
+        })
+
+    if request.method == 'POST':
+        slot_id = request.form.get('slot_id')
+        if not slot_id:
+            flash("Please select a slot.", "warning")
+            return redirect(url_for('patient_reschedule_appointment', appt_id=appt.id))
+
+        selected = DoctorAvailability.query.get_or_404(slot_id)
+
+        # double check not booked
+        if (selected.date, selected.start_time, selected.end_time) in booked_set:
+            flash("This slot is already booked. Please choose another.", "danger")
+            return redirect(url_for('patient_reschedule_appointment', appt_id=appt.id))
+
+        # update existing appointment
+        appt.date = selected.date
+        appt.start_time = selected.start_time
+        appt.end_time = selected.end_time
+        # keep status as 'Booked'
+        db.session.commit()
+        flash("Appointment rescheduled successfully!", "success")
+        return redirect(url_for('patient_dashboard'))
+
+    return render_template(
+        'patient_reschedule_appointment.html',
+        appt=appt,
+        doctor=doctor,
+        slots=slots
+    )
+
+
+# ------------------------ LOGOUT ------------------------ #
 
 @app.route('/logout')
 def logout():
