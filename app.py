@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from models import db, Admin, Doctor, Patient, Department, Appointment, Treatment, DoctorAvailability
 from config import Config
 from flask_bcrypt import Bcrypt
-from datetime import date, timedelta, time as time_cls, datetime as dt_cls
+from datetime import date, timedelta, time as dt_time, datetime
 import re
 
 bcrypt = Bcrypt()
@@ -45,7 +45,7 @@ app = create_app()
 
 # ---------- AVAILABILITY PARSING & SLOT GENERATION HELPERS ---------- #
 
-DAY_MAP = {
+WEEKDAY_MAP = {
     "Mon": 0,
     "Tue": 1,
     "Wed": 2,
@@ -55,102 +55,104 @@ DAY_MAP = {
     "Sun": 6,
 }
 
-
 def parse_availability_string(avail_str):
     """
-    Parses strings like:
-      "Mon-Fri 07:00-13:00"
-      "Mon,Wed,Fri 09:00-12:00"
-
-    Returns: (allowed_weekdays, start_time, end_time)
-      allowed_weekdays -> set[int] (0=Mon..6=Sun)
-      start_time/end_time -> datetime.time or None
+    Expected format: 'Mon–Fri: 07:00–13:00'
+    Returns: (start_weekday, end_weekday, start_time, end_time)
+    Or None if invalid.
     """
     if not avail_str:
-        return set(), None, None
-    
-    avail_str = avail_str.replace("–", "-").strip()
+        return None
 
-    try:
-        avail_str = avail_str.strip()
-        parts = avail_str.split()
-        if len(parts) != 2:
-            return set(), None, None
+    # Replace en-dash with normal hyphen just in case
+    avail_str = avail_str.replace("–", "-")
 
-        days_part, time_part = parts
-        time_start_str, time_end_str = time_part.split("-")
-        start_time = dt_cls.strptime(time_start_str, "%H:%M").time()
-        end_time = dt_cls.strptime(time_end_str, "%H:%M").time()
+    # Example normalized: 'Mon-Fri: 07:00-13:00'
+    pattern = r"([A-Za-z]{3})-([A-Za-z]{3})\s*:\s*([0-9]{2}:[0-9]{2})-([0-9]{2}:[0-9]{2})"
+    m = re.match(pattern, avail_str.strip())
+    if not m:
+        return None
 
-        allowed_days = set()
+    start_day, end_day, start_t_str, end_t_str = m.groups()
 
-        # Range like "Mon-Fri"
-        if "-" in days_part and "," not in days_part:
-            start_day, end_day = days_part.split("-")
-            start_idx = DAY_MAP.get(start_day)
-            end_idx = DAY_MAP.get(end_day)
-            if start_idx is None or end_idx is None:
-                return set(), None, None
-            for d in range(start_idx, end_idx + 1):
-                allowed_days.add(d)
-        else:
-            # Comma-separated like "Mon,Wed,Fri"
-            for token in days_part.split(","):
-                token = token.strip()
-                if token in DAY_MAP:
-                    allowed_days.add(DAY_MAP[token])
+    if start_day not in WEEKDAY_MAP or end_day not in WEEKDAY_MAP:
+        return None
 
-        return allowed_days, start_time, end_time
-    except Exception:
-        return set(), None, None
+    start_weekday = WEEKDAY_MAP[start_day]
+    end_weekday = WEEKDAY_MAP[end_day]
+
+    start_hour, start_minute = map(int, start_t_str.split(":"))
+    end_hour, end_minute = map(int, end_t_str.split(":"))
+
+    start_time = dt_time(start_hour, start_minute)
+    end_time = dt_time(end_hour, end_minute)
+
+    if datetime.combine(date.today(), end_time) <= datetime.combine(date.today(), start_time):
+        return None
+
+    return start_weekday, end_weekday, start_time, end_time
 
 
 def regenerate_availability_slots(doctor):
     """
-    Use doctor.availability (e.g. "Mon-Fri 07:00-13:00")
-    and create 1-hour slots for the next 7 days in DoctorAvailability.
-    Any old slots for this doctor are deleted first.
+    Clears old DoctorAvailability for this doc for the next 7 days
+    and regenerates 1-hour slots based on doctor.availability.
     """
-    
-    allowed_days, start_time, end_time = parse_availability_string(doctor.availability)
-
-    # clear old slots
-    DoctorAvailability.query.filter_by(doctor_id=doctor.id).delete()
-    db.session.commit()
-
-    if not allowed_days or not start_time or not end_time:
-        # nothing valid to generate
+    parsed = parse_availability_string(doctor.availability)
+    if not parsed:
+        print("⚠️ Could not parse availability:", doctor.availability)
         return
 
-    today = date.today()
+    start_wd, end_wd, start_time, end_time = parsed
 
-    for i in range(7):
-        d = today + timedelta(days=i)
-        if d.weekday() not in allowed_days:
+    # Delete existing upcoming slots
+    today = date.today()
+    week_later = today + timedelta(days=7)
+
+    DoctorAvailability.query.filter(
+        DoctorAvailability.doctor_id == doctor.id,
+        DoctorAvailability.date >= today,
+        DoctorAvailability.date <= week_later
+    ).delete()
+    db.session.commit()
+
+    # Generate 1-hour slots for each day in next 7 days
+    day_count = (week_later - today).days + 1
+    for offset in range(day_count):
+        current_date = today + timedelta(days=offset)
+        wd = current_date.weekday()  # 0 = Monday
+
+        # Check if this weekday is within the availability range
+        if start_wd <= end_wd:
+            in_range = start_wd <= wd <= end_wd
+        else:
+            # Wrap-around like Fri–Mon
+            in_range = wd >= start_wd or wd <= end_wd
+
+        if not in_range:
             continue
 
-        # Generate 1-hour blocks
-        current_hour = start_time.hour
-        while True:
-            slot_start = time_cls(current_hour, start_time.minute)
-            next_hour = current_hour + 1
-            slot_end = time_cls(next_hour, start_time.minute)
+        # Now create 1-hour blocks between start_time and end_time
+        start_dt = datetime.combine(current_date, start_time)
+        end_dt = datetime.combine(current_date, end_time)
 
-            # stop if the end exceeds doctor's end_time
-            if slot_end > end_time:
-                break
+        current = start_dt
+        while current + timedelta(hours=1) <= end_dt:
+            slot_start = current.time()
+            slot_end = (current + timedelta(hours=1)).time()
 
-            db.session.add(DoctorAvailability(
+            slot = DoctorAvailability(
                 doctor_id=doctor.id,
-                date=d,
+                date=current_date,
                 start_time=slot_start,
                 end_time=slot_end,
                 is_available=True
-            ))
-
-            current_hour += 1
+            )
+            db.session.add(slot)
+            current += timedelta(hours=1)
 
     db.session.commit()
+    print(f"✅ Regenerated slots for doctor {doctor.id} for next 7 days.")
 
 
 # ------------------------ AUTH & COMMON ROUTES ------------------------ #
