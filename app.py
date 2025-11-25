@@ -18,7 +18,6 @@ def create_app():
     with app.app_context():
         db.create_all()
 
-        # ✅ Create predefined Admin
         if not Admin.query.filter_by(username='admin').first():
             hashed_pw = bcrypt.generate_password_hash('admin123').decode('utf-8')
             admin = Admin(username='admin', password=hashed_pw, email='admin@hospital.com')
@@ -26,7 +25,6 @@ def create_app():
             db.session.commit()
             print("✅ Default admin created: username='admin', password='admin123'")
 
-        # ✅ Default departments
         if Department.query.count() == 0:
             default_departments = [
                 Department(name="Cardiology", description="Heart specialist"),
@@ -42,8 +40,6 @@ def create_app():
 
 
 app = create_app()
-
-# ---------- AVAILABILITY PARSING & SLOT GENERATION HELPERS ---------- #
 
 WEEKDAY_MAP = {
     "Mon": 0,
@@ -64,10 +60,9 @@ def parse_availability_string(avail_str):
     if not avail_str:
         return None
 
-    # Replace en-dash with normal hyphen just in case
     avail_str = avail_str.replace("–", "-")
 
-    # Example normalized: 'Mon-Fri: 07:00-13:00'
+    # Appointment format'Mon-Fri: 07:00-13:00'
     pattern = r"([A-Za-z]{3})-([A-Za-z]{3})\s*:\s*([0-9]{2}:[0-9]{2})-([0-9]{2}:[0-9]{2})"
     m = re.match(pattern, avail_str.strip())
     if not m:
@@ -94,10 +89,6 @@ def parse_availability_string(avail_str):
 
 
 def regenerate_availability_slots(doctor):
-    """
-    Clears old DoctorAvailability for this doc for the next 7 days
-    and regenerates 1-hour slots based on doctor.availability.
-    """
     parsed = parse_availability_string(doctor.availability)
     if not parsed:
         print("⚠️ Could not parse availability:", doctor.availability)
@@ -105,7 +96,6 @@ def regenerate_availability_slots(doctor):
 
     start_wd, end_wd, start_time, end_time = parsed
 
-    # Delete existing upcoming slots
     today = date.today()
     week_later = today + timedelta(days=7)
 
@@ -116,7 +106,6 @@ def regenerate_availability_slots(doctor):
     ).delete()
     db.session.commit()
 
-    # Generate 1-hour slots for each day in next 7 days
     day_count = (week_later - today).days + 1
     for offset in range(day_count):
         current_date = today + timedelta(days=offset)
@@ -126,13 +115,11 @@ def regenerate_availability_slots(doctor):
         if start_wd <= end_wd:
             in_range = start_wd <= wd <= end_wd
         else:
-            # Wrap-around like Fri–Mon
             in_range = wd >= start_wd or wd <= end_wd
 
         if not in_range:
             continue
 
-        # Now create 1-hour blocks between start_time and end_time
         start_dt = datetime.combine(current_date, start_time)
         end_dt = datetime.combine(current_date, end_time)
 
@@ -155,22 +142,18 @@ def regenerate_availability_slots(doctor):
     print(f"✅ Regenerated slots for doctor {doctor.id} for next 7 days.")
 
 
-# ------------------------ AUTH & COMMON ROUTES ------------------------ #
-
 @app.route('/', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         email = request.form['email']
         password = request.form['password']
 
-        # Check Admin
         admin = Admin.query.filter_by(email=email).first()
         if admin and bcrypt.check_password_hash(admin.password, password):
             session['role'] = 'admin'
             session['user'] = admin.username
             return redirect(url_for('admin_dashboard'))
 
-        # Check Doctor
         doctor = Doctor.query.filter_by(email=email).first()
         if doctor and bcrypt.check_password_hash(doctor.password, password):
             session['role'] = 'doctor'
@@ -178,7 +161,6 @@ def login():
             session['doctor_id'] = doctor.id
             return redirect(url_for('doctor_dashboard'))
 
-        # Check Patient
         patient = Patient.query.filter_by(email=email).first()
         if patient and bcrypt.check_password_hash(patient.password, password):
             session['role'] = 'patient'
@@ -212,7 +194,7 @@ def register():
     return render_template('register.html')
 
 
-# --------- ROLE DECORATORS --------- #
+#role decoraters
 
 def admin_required(func):
     from functools import wraps
@@ -252,8 +234,7 @@ def patient_required(func):
     return wrapper
 
 
-# ------------------------ ADMIN ROUTES ------------------------ #
-
+#Admin Routes
 @app.route('/admin/dashboard')
 @admin_required
 def admin_dashboard():
@@ -318,7 +299,6 @@ def admin_add_doctor():
         db.session.add(doc)
         db.session.commit()
 
-        # 🔁 generate 1-hour slots for the next 7 days based on availability
         regenerate_availability_slots(doc)
 
         flash("Doctor added successfully", "success")
@@ -346,7 +326,7 @@ def admin_edit_doctor(doctor_id):
 
         db.session.commit()
 
-        # if availability changed, regenerate slots
+        # if availability changed, regenerates slots
         if doctor.availability != old_avail:
             regenerate_availability_slots(doctor)
 
@@ -458,7 +438,6 @@ def admin_delete_patient(patient_id):
 def admin_patient_history(patient_id):
     patient = Patient.query.get_or_404(patient_id)
 
-    # All appointments for this patient (past + future), newest first
     appointments = (
         Appointment.query
         .filter_by(patient_id=patient.id)
@@ -473,8 +452,7 @@ def admin_patient_history(patient_id):
     )
 
 
-# ------------------------ DOCTOR ROUTES ------------------------ #
-
+#Doctor Routes
 @app.route('/doctor')
 @doctor_required
 def doctor_dashboard():
@@ -563,8 +541,7 @@ def doctor_manage_availability():
     return render_template('doctor_availability.html', doctor=doctor)
 
 
-# ------------------------ PATIENT ROUTES ------------------------ #
-
+#Patient Routes
 @app.route('/patient')
 @patient_required
 def patient_dashboard():
@@ -655,7 +632,6 @@ def patient_book_appointment(doctor_id):
     today = date.today()
     week_later = today + timedelta(days=7)
 
-    # DB slots
     db_slots = DoctorAvailability.query.filter(
         DoctorAvailability.doctor_id == doctor_id,
         DoctorAvailability.date >= today,
@@ -663,7 +639,6 @@ def patient_book_appointment(doctor_id):
         DoctorAvailability.is_available == True
     ).order_by(DoctorAvailability.date, DoctorAvailability.start_time).all()
 
-    # already booked appointments
     booked = Appointment.query.filter(
         Appointment.doctor_id == doctor_id,
         Appointment.date >= today,
@@ -673,7 +648,6 @@ def patient_book_appointment(doctor_id):
 
     booked_set = {(b.date, b.start_time, b.end_time) for b in booked}
 
-    # build display slots with the fields your template expects
     display_slots = []
     for s in db_slots:
         is_booked = (s.date, s.start_time, s.end_time) in booked_set
@@ -710,8 +684,8 @@ def patient_book_appointment(doctor_id):
     return render_template(
         'patient_book_appointment.html',
         doctor=doctor,
-        slots=display_slots,   # <- use display_slots here
-        booked_set=booked_set  # not strictly needed by template now
+        slots=display_slots,   
+        booked_set=booked_set 
     )
 
 
@@ -753,12 +727,11 @@ def patient_reschedule_appointment(appt_id):
     patient_id = session.get('patient_id')
     appt = Appointment.query.get_or_404(appt_id)
 
-    # safety: appointment must belong to this patient
     if appt.patient_id != patient_id:
         flash("You are not allowed to reschedule this appointment.", "danger")
         return redirect(url_for('patient_dashboard'))
 
-    # Optional: only allow rescheduling of Booked appointments
+    #rescheduling of Booked appointments
     if appt.status != 'Booked':
         flash("Only booked appointments can be rescheduled.", "warning")
         return redirect(url_for('patient_dashboard'))
@@ -781,12 +754,11 @@ def patient_reschedule_appointment(appt_id):
         Appointment.date >= today,
         Appointment.date <= week_later,
         Appointment.status != 'Cancelled',
-        Appointment.id != appt.id     # exclude the current appointment
+        Appointment.id != appt.id   
     ).all()
 
     booked_set = {(b.date, b.start_time, b.end_time) for b in other_appts}
 
-    # Build slot view objects like we did for booking
     slots = []
     for s in base_slots:
         is_booked = (s.date, s.start_time, s.end_time) in booked_set
@@ -807,16 +779,15 @@ def patient_reschedule_appointment(appt_id):
 
         selected = DoctorAvailability.query.get_or_404(slot_id)
 
-        # double check not booked
+        # double check for not booked slots
         if (selected.date, selected.start_time, selected.end_time) in booked_set:
             flash("This slot is already booked. Please choose another.", "danger")
             return redirect(url_for('patient_reschedule_appointment', appt_id=appt.id))
 
-        # update existing appointment
+        # updatation of existing appointment
         appt.date = selected.date
         appt.start_time = selected.start_time
         appt.end_time = selected.end_time
-        # keep status as 'Booked'
         db.session.commit()
         flash("Appointment rescheduled successfully!", "success")
         return redirect(url_for('patient_dashboard'))
@@ -828,8 +799,6 @@ def patient_reschedule_appointment(appt_id):
         slots=slots
     )
 
-
-# ------------------------ LOGOUT ------------------------ #
 
 @app.route('/logout')
 def logout():

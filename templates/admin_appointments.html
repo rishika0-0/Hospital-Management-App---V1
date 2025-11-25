@@ -61,7 +61,7 @@
             {% endif %}
           </td>
 
-          <!-- Diagnosis / Prescription from Treatment (if exists) -->
+          <!-- Diagnosis -->
           <td>{{ appt.treatment.diagnosis if appt.treatment else '-' }}</td>
           <td>{{ appt.treatment.prescription if appt.treatment else '-' }}</td>
 

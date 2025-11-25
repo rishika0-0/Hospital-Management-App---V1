@@ -16,12 +16,11 @@
       }
     }
 
-    // Pre-fill dropdowns if doctor already has availability (e.g. "Mon–Fri: 10:00–16:00")
+    // Pre-filling availability
     window.onload = function () {
       const current = "{{ doctor.availability or '' }}";
       if (current.includes(" ")) {
         try {
-          // e.g. "Mon-Fri 07:00-13:00"
           const [days, times] = current.split(" ").map(s => s.trim());
           const [startDay, endDay] = days.split("-");
           const [startTime, endTime] = times.split("-");
@@ -55,7 +54,7 @@
       <input type="email" id="email" name="email" class="form-control" value="{{ doctor.email }}" required>
     </div>
 
-    <!-- Password (Optional) -->
+    <!-- Password -->
     <div class="mb-3">
       <label for="password" class="form-label">New Password (optional)</label>
       <input type="password" id="password" name="password" class="form-control" placeholder="Leave blank to keep current password">
