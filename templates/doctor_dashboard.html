@@ -3,6 +3,57 @@
 <head>
   <title>Doctor Dashboard | HMS</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+     body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #ffffff, #e3f2fd);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    h2, h4 {
+      color: #1f2937;
+      font-weight: 700;
+    }
+
+    thead.container-3 {
+      background-color: #4a90e2fa;
+      border-color: #4a90e2;
+    }
+
+    thead.container-3 th {
+      background: linear-gradient(135deg, #4e9ffb, rgb(44, 170, 228));
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    tbody tr:nth-of-type(odd) {
+      background-color: #f9fafb;
+    }
+
+    tbody tr:nth-of-type(even) {
+      background-color: #eef2ff;
+    }
+
+    tbody tr:hover {
+      background-color: #e0ecff;
+      transition: 0.25s;
+    }
+
+    .btn-primary {
+      border-radius: 999px;
+      background: linear-gradient(135deg, #4a90e2, #0c8eca);
+      border: none;
+      font-weight: 600;
+    }
+
+    .btn-outline-secondary,
+    .btn-outline-danger,
+    .btn-outline-info,
+    .btn-outline-primary {
+      border-radius: 999px;
+      font-weight: 500;
+    }
+  </style>
 </head>
 <body class="container mt-5">
 
@@ -16,7 +67,7 @@
   <h4 class="mt-4">Today's Appointments</h4>
   <div class="table-responsive mb-4">
     <table class="table table-striped table-hover align-middle">
-      <thead class="table-dark">
+      <thead class="table-dark container-3">
         <tr>
           <th>Time</th>
           <th>Patient</th>
@@ -49,7 +100,7 @@
   <h4>Weekly Appointments</h4>
   <div class="table-responsive">
     <table class="table table-bordered table-hover align-middle">
-      <thead class="table-secondary">
+      <thead class="table-secondary container-3">
         <tr>
           <th>Date</th>
           <th>Time</th>
